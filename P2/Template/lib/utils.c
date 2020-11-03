@@ -60,21 +60,20 @@ void sendChunkData(char *inputFile, int nMappers) {
         strcat(chunk,checkString);                                           //add the whitespace character
         
         if(currentChunkSize == chunkSize){                                  //once i have reached 1024 bytes, send the chunk
-          send1 = msgsnd(msgid, (void *) &chunk, mapperID)
+           send1 = msgsnd(msgid, (void *) &chunk, mapperID)
           
-          if(mapperID < nMappers){
-            mapperID++;
-          }
+           if(mapperID < nMappers){
+             mapperID++;
+           }
           
-          /*Reset everything after a chunk as been sent*/
-          charCount = 0;
-          currentChunkSize = 0;
-          memset(chunk, '\0', chunkSize);
+           /*Reset everything after a chunk as been sent*/
+           charCount = 0;
+           currentChunkSize = 0;
+           memset(chunk, '\0', chunkSize);
         }
-        
         memset(tempString, '\0', chunkSize);
         
-      }else if(currentChunkSize > chunkSize){                               //DO NOT concatenate the next word to the chunk if it would put it over 1024 bytes
+       }else if(currentChunkSize > chunkSize){                               //DO NOT concatenate the next word to the chunk if it would put it over 1024 bytes
         
         send1 = msgsnd(msgid, (void *) &chunk, mapperID)
         
@@ -129,6 +128,68 @@ int getInterData(char *key, int reducerID) {
 }
 
 void shuffle(int nMappers, int nReducers) {
+  
+  /*open mesage queue*/   
+  key_t key = ftok("project", 4285922);                           //has to be the same key as the one in getChuckdata()
+  struct msgBuffer msg;                                           //declare a variable msg of type struct msgBuffer to represent the chunk
+  int mid = msgget(key, PERM | IPC_CREAT); 
+
+  
+  struct dirent *entry;                                 // preparation of traversing the directory of each Mapper and send the word filepath to the reducers
+
+  char buff[1024];                      //buffer for the word filepath
+  for (int i = 0; i < nMappers; i += 1){
+      
+    sprintf(buff, "output/MapOut/Map_%d", i+1);         //copy word filepath to buffer
+    DIR *dir = opendir(buff);                           // open mapOutdirectory
+    
+    //error handling
+    if (dir == NULL){
+      printf("The path passed is invalid");
+      return -1;
+    }
+
+    /* traverse the directory of a mapper */
+    while (entry = readdir(dir)) {        
+
+      if (entry->d_type == DT_REG){                                              //verify that the type entry is pointing to is a file. if so, choose the reducer using a hash function
+
+        int reducerId = 1 + hashFunction(entry->d_name,nReducers);               //selecting the reducer using the already defined hash function.
+        sprintf(msg.msgText, "output/MapOut/Map_%d/%s", i+1, entry->d_name);
+        msg.msgType = i + 1;                                                    //use reducerid as tag
+        int a = msgsnd(mid, &msg , MSGSIZE, 0);
+
+        //error handling
+        if (a == -1){
+          return -1;     
+        }
+      }
+    }
+    
+    closedir(dir);          //close directory when finished
+  }
+
+  /*send "END" message to reducers*/
+    for (int i=0; i<nReducers; i++){
+      
+    msg.mtype = nReducers + 1;                                      //use reducerID (i) as the tag
+    sprintf(msg.msgText, "END");
+    int b = msgsnd(mid, (void *) &msg, sizeof(msg.msgText), 0);
+    
+    //error handling 
+    if(b==-1){
+      return -1; 
+
+    }
+  }
+
+  //wait for ACK from the reducers for END notification
+  for (int i=0; i<nReducers; i++){
+    wait(mid);
+  }
+
+  //close message queue
+  msgctl(mid, IPC_RMID, NULL);
 }
 
 // check if the character is valid for a word
