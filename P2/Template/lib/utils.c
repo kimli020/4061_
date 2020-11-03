@@ -1,4 +1,8 @@
 #include "utils.h"
+#include <sys/msg.h>
+#define PERM 0666          //User, groups and other have R/W.
+#define ERROR 0            //for errors in the code
+
 
 char *getChunkData(int mapperID) {
     
@@ -85,7 +89,7 @@ void sendChunkData(char *inputFile, int nMappers) {
         currentChunkSize = 0;
         memset(chunk, '\0', chunkSize);)
 
-        currentChunkSize += (charCount-1);                 //at this point, I want to go back to line 29...not sure how to implement this
+        currentChunkSize += (charCount-1);                 //at this point, I want to go back...not sure how to implement this
       }
     }
   }
