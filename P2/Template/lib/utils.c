@@ -16,7 +16,7 @@ char *getChunkData(int mapperID) {
     }
     
     struct msgBuffer msg;                        //declare an instance of msgBuffer to represent the 1024-bit chunk
-    memset((void *)MSG.mtext, '\0',1024);        // blank out chunk 
+    memset((void *)msg.mtext, '\0',1024);        // blank out chunk 
 
   
     int check = msgrcv(mid,(void *)&msg, 1024, mapperID, 0);            // recieve from Queue 
