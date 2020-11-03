@@ -8,17 +8,32 @@ char *getChunkData(int mapperID) {
     
     /*open Message Queue*/ 
     key_t key = ftok("project",4285922);          //the key can be whatever, but it has to be the same as the one used to open the msg queue in  sendChunkData(). TA recommends the 2nd argument be student id#
-    struct msgBuffer msg;                        //declare an instance of msgBuffer to represent the 1024-bit chunk
     int mid = msgget(key, PERM| IPC_CREAT);      //User, groups and other have R/W. Create queue if it doesn't already exist
  
-     //error handling:
+     //error handling
     if(mid == -1){
         return -1; 
     }
+    
+    struct msgBuffer msg;                        //declare an instance of msgBuffer to represent the 1024-bit chunk
+    memset((void *)MSG.mtext, '\0',1024);        // blank out chunk 
 
-    //receive data from the master who was supposed to send a specific mapperID/
-    msgrcv(mid, &msg, sizeof(msg.msgText), mapperID, 0); 
-
+  
+    int check = msgrcv(mid,(void *)&msg, 1024, mapperID, 0);            // recieve from Queue 
+    //error handling
+    if (check  == (ssize_t)-1){
+        perror("Error in getChunkData\n");
+        exit(0);
+   }
+   
+   char*c = malloc(sizeof(msg.mtext)); 
+   strcpy(c, msg.mtext);                          // copy from recieved msg into c
+  
+   if (strcmp(c,"END") == 0){
+        return NULL;
+   }
+   
+    return c;
 }
 
 // sends chunks of size 1024 to the mappers in RR fashion
