@@ -7,17 +7,18 @@ char *getChunkData(int mapperID) {
     struct msgBuffer msg, ACKmsg;                        //declare an instance of msgBuffer to represent the 1024-bit chunk
     int mid = msgget(key, PERM | IPC_CREAT);      //User, groups and other have R/W. Create queue if it doesn't already exist
     int ACKsent;
-    char *retChunk = (char *)malloc(sizeof(char)*chunkSize); //initialize a buffer for chunk data - chunk size = 1024 bytes
-    if(bufferChunk = NULL) {
-      printf("getChunkData malloc() failure \n");
-      exit(0);
-    }
-    memset(retChunk, '\0', chunkSize);
-     //error handling:
+    //error handling:
     if(mid == -1){
 				perror("Error getting msg queue in getChunkData \n");
         exit(-1);
     }
+    char *retChunk = (char *)malloc(sizeof(char)*chunkSize); //initialize a buffer for chunk data - chunk size = 1024 bytes
+    if(retChunk = NULL) {
+      printf("getChunkData malloc() failure \n");
+      exit(0);
+    }
+    memset(retChunk, '\0', chunkSize);
+     
     //receive data from the master who was supposed to send a specific mapperID/
     msgrcv(mid, &msg, sizeof(msg.msgText), mapperID, 0);
 
