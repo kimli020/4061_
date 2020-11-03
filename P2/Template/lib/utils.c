@@ -21,7 +21,7 @@ char *getChunkData(int mapperID) {
   
     int check = msgrcv(mid,(void *)&msg, 1024, mapperID, 0);            // recieve from Queue 
     //error handling
-    if (check  == (ssize_t)-1){
+    if (check  == -1){
         perror("Error in getChunkData\n");
         exit(0);
    }
