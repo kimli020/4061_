@@ -7,18 +7,20 @@ char *getChunkData(int mapperID) {
     struct msgBuffer msg, ACKmsg;                        //declare an instance of msgBuffer to represent the 1024-bit chunk
     int mid = msgget(key, PERM | IPC_CREAT);      //User, groups and other have R/W. Create queue if it doesn't already exist
     int ACKsent;
-    //error handling:
+
     if(mid == -1){
-				perror("Error getting msg queue in getChunkData \n");
+        perror("Error opening msg queue in getChunkData \n");
         exit(-1);
     }
+
     char *retChunk = (char *)malloc(sizeof(char)*chunkSize); //initialize a buffer for chunk data - chunk size = 1024 bytes
     if(retChunk = NULL) {
       printf("getChunkData malloc() failure \n");
       exit(0);
     }
     memset(retChunk, '\0', chunkSize);
-     
+     //error handling:
+
     //receive data from the master who was supposed to send a specific mapperID/
     msgrcv(mid, &msg, sizeof(msg.msgText), mapperID, 0);
 
@@ -45,6 +47,10 @@ void sendChunkData(char *inputFile, int nMappers) {
   /*open Message Queue*/
   key_t key = ftok("project", 4285922);        //has to be the same key as the one in getChunkdata()
   int msgid = msgget(key, PERM | IPC_CREAT);
+  if(msgid < 0) {
+    perror("Msg queue open error in sendChunkData");
+    return;
+  }
   struct msgBuffer msg;
   struct msgBuffer ACKmsg; //used to consider ACK messages
 	int send1, send2 = 0;
@@ -90,7 +96,7 @@ void sendChunkData(char *inputFile, int nMappers) {
 		memset(msg.msgText, '\0', MSGSIZE);
 		sprintf(msg.msgText, "END");
 		send2 = msgsnd(msgid, (void*) &msg, sizeof(msg.msgText), 0);  //message of type END
-    if(send1 < 0){ //send error
+    if(send2 < 0){ //send error
       perror("Msg send error in sendChunkData");
       break;
     }
@@ -102,14 +108,17 @@ void sendChunkData(char *inputFile, int nMappers) {
     // receive messages of ACKTYPE sent by getChunkData when mapper receives END msg
     ACKsent = msgrcv(msgid, (void*) ACKmsssize_tg, sizeof(ACKmsg.msgText), ACKTYPE, 0);
     if(ACKsent < 0) { //failed to receive ACK
+      perror("ACK failure in sendChunkData");
       continue;
     }
     numberOfACK++;
   }
 
 	/*Close everything*/
-	msgctl(msgid, IPC_RMID, NULL);
+	msgctl(msgid, IPC_RMID, NULL); //close msg queue
 	fclose(file);
+
+  return;
 }
 
 // hash function to divide the list of word.txt files across reducers
@@ -124,11 +133,84 @@ int hashFunction(char* key, int reducers){
     return (hash % reducers);
 }
 
+void shuffle(int nMappers, int nReducers) {
+  //Open message queue
+  key_t key = ftok("project", 4285922);        //has to be the same key as the one in getChunkdata()
+  int msgid = msgget(key, PERM | IPC_CREAT);
+  char *mapDir; //Directory path to mapper output, assumes created in the mapping phase
+  DIR* currMapDir;
+  int pathSend, ENDsend = 0;
+  ssize_t ACKsent = 0;
+  struct msgBuffer txtPath; //msg contains the path to the word file
+  struct msgBuffer endMsg; //end msg to reducers
+  char* fileName; // notes the file names for files within directory
+  int reducerID; //id of Reducer to be returned by hash
+  struct dirent* MapDirEntry;
+
+  if(msgid < 0) {
+    perror("Msg queue open error in shuffle");
+    return;
+  }
+
+  for(int i=0; i<nMappers; i++){
+    mapDir = getMapDir(i);
+    if((currMapDir = opendir(mapDir)) == -1){
+      perror("Directory open error in shuffle");
+      break;
+    }
+    while((MapDirEntry = readdir(currMapDir)) != NULL) {
+      if(MapDirEntry->d_type == DT_REG && (fileName = strstr(MapDirEntry->d_name, ".txt")) != NULL){   //Current entry is a regular file of type .txt
+        reducerID = hash(MapDirEntry->d_name, nReducers); //Call hash function
+        //Populate the fields of txtPath to send to the msg queue
+        txtPath.msgType = reducerID;
+        //Concatenate text file path into message Text to send to queue
+        txtPath.msgText[0] = '\0'; //resets the message to length 0 string
+        //memset(endMsg.msgText, '\0', MSGSIZE); //sets a whole string of null characters
+        strcpy(txtPath.msgText, mapDir);
+        strcat(txtPath.msgText, "/");
+        strcat(txtPath.msgText, MapDirEntry->d_name);
+        //Send txt file path into queue
+        pathSend = msgsnd(msgid, (void*) &txtPath, sizeof(txtPath.msgText), 0);
+        if(pathSend < 0) {
+          perror("Send error in shuffle");
+          break;
+        } //pathSend if
+      } // txt file entry if
+    } //  traversing map output directory loop
+    closedir(currMapDir);
+  } //   iterate process for all mappers loop
+
+  //Send end msg to reducers
+  for(int i=0; i<nReducers; i++)	{
+    endMsg.msgType = i+1;
+    memset(endMsg.msgText, '\0', MSGSIZE);
+    sprintf(endMsg.msgText, "END");
+    ENDsend = msgsnd(msgid, (void*) &msg, sizeof(msg.msgText), 0);  //message of type END
+    if(ENDsend < 0){ //send error
+      perror("Send error in shuffle");
+      break;
+    }
+  }
+
+  int numberOfACK = 0;
+  while(numberOfACK < nReducers){ //not all mappers have sent ACK's - blocking loop
+    // receive messages of ACKTYPE sent by getChunkData when mapper receives END msg
+    ACKsent = msgrcv(msgid, (void*) ACKmsssize_tg, sizeof(ACKmsg.msgText), ACKTYPE, 0);
+    if(ACKsent < 0) { //failed to receive ACK
+      perror("ACK failure in shuffle");
+      continue;
+    }
+    numberOfACK++;
+  }
+  // Close everything 
+  msgctl(msgid, IPC_RMID, NULL); //close msg queue
+  return;
+}
+
+
 int getInterData(char *key, int reducerID) {
 }
 
-void shuffle(int nMappers, int nReducers) {
-}
 
 // Do open and close outside this function so as not to repeatedly open/close the file -> better performance
 //	Assume inputFile is opened, write to bufferChunk
@@ -176,6 +258,20 @@ char *getNextChunk(FILE* inputFile) {
 	//"returns" a character buffer of full words only (extra slots are padded with '\0')
 	return bufferChunk;
 }
+
+char *getMapDir(int mapperID){  //just createMapDir without the create part since map outputs have all been created
+	char *dirName = (char *) malloc(sizeof(char) * 100);
+	memset(dirName, '\0', 100);
+	sprintf(dirName, "output/MapOut/Map_%d", mapperID);
+	return dirName;
+}
+
+
+/*
+  ****************************************************************************************************************************************
+  Functions given in code template  ******************************************************************************************************
+  ****************************************************************************************************************************************
+*/
 
 // check if the character is valid for a word
 int validChar(char c){
