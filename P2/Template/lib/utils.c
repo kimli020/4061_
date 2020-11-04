@@ -1,5 +1,9 @@
 #include "utils.h"
 
+//  User-defined function prototypes
+char *getMapDir(int mapperID);
+char *getNextChunk(FILE* inputFile);
+
 char *getChunkData(int mapperID) {
 
     /*open Message Queue*/
@@ -27,7 +31,8 @@ char *getChunkData(int mapperID) {
     if(strcmp(msg.msgText, "END") == 0){ //END message received, send a message of type ACK
       ACKmsg.msgType = ACKTYPE;
       strcpy(ACKmsg.msgText, "ACK");
-      ACKsent = msgsnd(msgid, (void*) &msg, sizeof(msg.msgText), 0);
+      ACKsent =
+      msgsnd(mid, (void*) &msg, sizeof(msg.msgText), 0);
       if (ACKsent < 0) {
         perror("Error sending ACK message");
       }
@@ -66,7 +71,7 @@ void sendChunkData(char *inputFile, int nMappers) {
 	fseek(file, 0, SEEK_SET); //reset to beginning of file
 
   if(file == NULL) {
-		printf("ERROR: Cannot open the file %s\n", wordFileName);
+		printf("ERROR: Cannot open the file %s\n", inputFile);
     exit(0);
   }
 
@@ -106,7 +111,8 @@ void sendChunkData(char *inputFile, int nMappers) {
   int numberOfACK = 0;
   while(numberOfACK < nMappers){ //not all mappers have sent ACK's - blocking loop
     // receive messages of ACKTYPE sent by getChunkData when mapper receives END msg
-    ACKsent = msgrcv(msgid, (void*) ACKmsssize_tg, sizeof(ACKmsg.msgText), ACKTYPE, 0);
+    ACKsent =
+    msgrcv(msgid, (void*) &ACKmsg, sizeof(ACKmsg.msgText), ACKTYPE, 0);
     if(ACKsent < 0) { //failed to receive ACK
       perror("ACK failure in sendChunkData");
       continue;
@@ -144,6 +150,7 @@ void shuffle(int nMappers, int nReducers) {
   ssize_t ACKsent = 0;
   struct msgBuffer txtPath; //msg contains the path to the word file
   struct msgBuffer endMsg; //end msg to reducers
+  struct msgBuffer ACKmsg;  //ACK message
   char* fileName; // notes the file names for files within directory
   int reducerID; //id of Reducer to be returned by hash
   struct dirent* MapDirEntry;
@@ -154,8 +161,9 @@ void shuffle(int nMappers, int nReducers) {
   }
 
   for(int i=0; i<nMappers; i++){
-    mapDir = getMapDir(i);
-    if((currMapDir = opendir(mapDir)) == -1){
+    mapDir = getMapDir(i+1);
+    printf("%s\n", mapDir);
+    if((currMapDir = opendir(mapDir)) == NULL){
       perror("Directory open error in shuffle");
       break;
     }
@@ -168,7 +176,7 @@ void shuffle(int nMappers, int nReducers) {
         strcat(wordFilePath, "/");
         strcat(wordFilePath, MapDirEntry->d_name);
 
-        reducerID = hash(wordFilePath, nReducers); //Call hash function (wordFilePath, nReducers)
+        reducerID = hashFunction(wordFilePath, nReducers); //Call hash function (wordFilePath, nReducers)
         //Populate the fields of txtPath to send to the msg queue
         txtPath.msgType = reducerID;
         //txtPath.msgText[0] = '\0'; //resets the message to length 0 string
@@ -190,7 +198,7 @@ void shuffle(int nMappers, int nReducers) {
     endMsg.msgType = i+1;
     memset(endMsg.msgText, '\0', MSGSIZE);
     sprintf(endMsg.msgText, "END");
-    ENDsend = msgsnd(msgid, (void*) &msg, sizeof(msg.msgText), 0);  //message of type END
+    ENDsend = msgsnd(msgid, (void*) &endMsg, sizeof(endMsg.msgText), 0);  //message of type END
     if(ENDsend < 0){ //send error
       perror("Send error in shuffle");
       break;
@@ -200,7 +208,8 @@ void shuffle(int nMappers, int nReducers) {
   int numberOfACK = 0;
   while(numberOfACK < nReducers){ //not all mappers have sent ACK's - blocking loop
     // receive messages of ACKTYPE sent by getChunkData when mapper receives END msg
-    ACKsent = msgrcv(msgid, (void*) ACKmsssize_tg, sizeof(ACKmsg.msgText), ACKTYPE, 0);
+    ACKsent =
+    msgrcv(msgid, (void*) &ACKmsg, sizeof(ACKmsg.msgText), ACKTYPE, 0);
     if(ACKsent < 0) { //failed to receive ACK
       perror("ACK failure in shuffle");
       continue;
@@ -216,9 +225,9 @@ void shuffle(int nMappers, int nReducers) {
 int getInterData(char *key, int reducerID) {  //key is the file path to txt file
 
   /*open Message Queue*/
-  key_t key = ftok("project",4285922);          //the key can be whatever, but it has to be the same as the one used to open the msg queue in  sendChunkData(). TA recommends the 2nd argument be student id#
+  key_t MsgKey = ftok("project",4285922);          //the key can be whatever, but it has to be the same as the one used to open the msg queue in  sendChunkData(). TA recommends the 2nd argument be student id#
   struct msgBuffer msg, ACKmsg;                        //declare an instance of msgBuffer to represent the 1024-bit chunk
-  int mid = msgget(key, PERM | IPC_CREAT);      //User, groups and other have R/W. Create queue if it doesn't already exist
+  int mid = msgget(MsgKey, PERM | IPC_CREAT);      //User, groups and other have R/W. Create queue if it doesn't already exist
   int ACKsent;
   if(mid == -1){
       perror("Error opening msg queue in getInterData \n");
@@ -238,17 +247,18 @@ int getInterData(char *key, int reducerID) {  //key is the file path to txt file
   if(strcmp(msg.msgText, "END") == 0){ //END message received, send a message of type ACK
     ACKmsg.msgType = ACKTYPE;
     strcpy(ACKmsg.msgText, "ACK");
-    ACKsent = msgsnd(msgid, (void*) &msg, sizeof(msg.msgText), 0);
+    ACKsent =
+    msgsnd(mid, (void*) &msg, sizeof(msg.msgText), 0);
     if (ACKsent < 0) {
       perror("Error sending ACK message");
     }
   }
   else {  //meaningful txt file path in message
     // copy chunk data into retChunk
-    memcpy(retChunk, msg.msgText, sizeof(char)*chunkSize);
+    memcpy(key, msg.msgText, sizeof(char)*chunkSize);
   }
   // Whatever calls getInterData should remember to call free()
-  return retChunk;
+  return 0;
 }
 
 

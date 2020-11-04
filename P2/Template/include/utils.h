@@ -31,8 +31,6 @@ int validChar(char c);
 char *getWord(char *chunk, int *i);
 char *getChunkData(int mapperID);
 void sendChunkData(char *inputFile, int nMappers);
-char *getNextChunk(FILE* inputFile);
-
 
 // reducer side
 int hashFunction(char* key, int reducers);
