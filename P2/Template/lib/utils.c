@@ -138,6 +138,7 @@ void shuffle(int nMappers, int nReducers) {
   key_t key = ftok("project", 4285922);        //has to be the same key as the one in getChunkdata()
   int msgid = msgget(key, PERM | IPC_CREAT);
   char *mapDir; //Directory path to mapper output, assumes created in the mapping phase
+  char *wordFilePath;
   DIR* currMapDir;
   int pathSend, ENDsend = 0;
   ssize_t ACKsent = 0;
@@ -160,15 +161,19 @@ void shuffle(int nMappers, int nReducers) {
     }
     while((MapDirEntry = readdir(currMapDir)) != NULL) {
       if(MapDirEntry->d_type == DT_REG && (fileName = strstr(MapDirEntry->d_name, ".txt")) != NULL){   //Current entry is a regular file of type .txt
-        reducerID = hash(MapDirEntry->d_name, nReducers); //Call hash function
+
+        //Set up wordFilePath string for .txt file
+        memset(wordFilePath, '\0', MSGSIZE);
+        strcpy(wordFilePath, mapDir);
+        strcat(wordFilePath, "/");
+        strcat(wordFilePath, MapDirEntry->d_name);
+
+        reducerID = hash(wordFilePath, nReducers); //Call hash function (wordFilePath, nReducers)
         //Populate the fields of txtPath to send to the msg queue
         txtPath.msgType = reducerID;
-        //Concatenate text file path into message Text to send to queue
-        txtPath.msgText[0] = '\0'; //resets the message to length 0 string
-        //memset(endMsg.msgText, '\0', MSGSIZE); //sets a whole string of null characters
-        strcpy(txtPath.msgText, mapDir);
-        strcat(txtPath.msgText, "/");
-        strcat(txtPath.msgText, MapDirEntry->d_name);
+        //txtPath.msgText[0] = '\0'; //resets the message to length 0 string
+        memset(txtPath.msgText, '\0', MSGSIZE); //sets a whole string of null characters
+        memcpy(txtPath.msgText, wordFilePath, MSGSIZE);
         //Send txt file path into queue
         pathSend = msgsnd(msgid, (void*) &txtPath, sizeof(txtPath.msgText), 0);
         if(pathSend < 0) {
@@ -202,13 +207,48 @@ void shuffle(int nMappers, int nReducers) {
     }
     numberOfACK++;
   }
-  // Close everything 
+  // Close everything
   msgctl(msgid, IPC_RMID, NULL); //close msg queue
   return;
 }
 
 
-int getInterData(char *key, int reducerID) {
+int getInterData(char *key, int reducerID) {  //key is the file path to txt file
+
+  /*open Message Queue*/
+  key_t key = ftok("project",4285922);          //the key can be whatever, but it has to be the same as the one used to open the msg queue in  sendChunkData(). TA recommends the 2nd argument be student id#
+  struct msgBuffer msg, ACKmsg;                        //declare an instance of msgBuffer to represent the 1024-bit chunk
+  int mid = msgget(key, PERM | IPC_CREAT);      //User, groups and other have R/W. Create queue if it doesn't already exist
+  int ACKsent;
+  if(mid == -1){
+      perror("Error opening msg queue in getInterData \n");
+      exit(-1);
+  }
+
+  char *retChunk = (char *)malloc(sizeof(char)*chunkSize); //initialize a buffer for chunk data - chunk size = 1024 bytes
+  if(retChunk = NULL) {
+    printf("getInterData malloc() failure \n");
+    exit(0);
+  }
+  memset(retChunk, '\0', chunkSize);
+   //error handling:
+
+  //receive data from the master who was supposed to send to a specific reducerID
+  msgrcv(mid, &msg, sizeof(msg.msgText), reducerID, 0);
+  if(strcmp(msg.msgText, "END") == 0){ //END message received, send a message of type ACK
+    ACKmsg.msgType = ACKTYPE;
+    strcpy(ACKmsg.msgText, "ACK");
+    ACKsent = msgsnd(msgid, (void*) &msg, sizeof(msg.msgText), 0);
+    if (ACKsent < 0) {
+      perror("Error sending ACK message");
+    }
+  }
+  else {  //meaningful txt file path in message
+    // copy chunk data into retChunk
+    memcpy(retChunk, msg.msgText, sizeof(char)*chunkSize);
+  }
+  // Whatever calls getInterData should remember to call free()
+  return retChunk;
 }
 
 
