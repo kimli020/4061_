@@ -254,10 +254,11 @@ int getInterData(char *key, int reducerID) {  //key is the file path to txt file
     }
   }
   else {  //meaningful txt file path in message
-    // copy chunk data into retChunk
+    // copy msg text into key 
     memcpy(key, msg.msgText, sizeof(char)*chunkSize);
   }
   // Whatever calls getInterData should remember to call free()
+  free(retChunk);
   return 0;
 }
 
