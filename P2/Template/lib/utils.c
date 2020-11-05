@@ -3,46 +3,55 @@
 
 //  User-defined function prototypes
 char *getChunkData(int mapperID) {
-
+    printf("ChunkData. mapperID = %d\n", mapperID);
+    
     /*open Message Queue*/
-    key_t key = ftok("project",4285922);          //the key can be whatever, but it has to be the same as the one used to open the msg queue in  sendChunkData(). TA recommends the 2nd argument be student id#
+    key_t key = ftok("project", 4285922);          //the key can be whatever, but it has to be the same as the one used to open the msg queue in  sendChunkData(). TA recommends the 2nd argument be student id#
     int mid = msgget(key, PERM | IPC_CREAT);     
     if(mid == -1){
         perror("Error opening msg queue in getChunkData \n");
         exit(-1);
     }
     
-  /*Create Buffer for ChunkData*/
-    char *retChunk = (char *)malloc(sizeof(char)*chunkSize); //initialize a buffer 
-    if(retChunk == NULL) {
-      printf("getChunkData malloc() failure \n");
-      exit(0);
-    }
-    memset(retChunk, '\0', chunkSize);
     
+     /*Create Buffer for ChunkData*/
+    char *retChunk;
+    retChunk = malloc(1024);
+    
+   
     /*Recieve a chunk from the master*/
-    struct msgBuffer msg; 
-    if(msgrcv(mid, &msg, sizeof(msg.msgText), mapperID, 0) < 0){
-      printf("Unable to recieve msg from master in getChunkData\n ");
-      exit(0);
-    }
+    struct msgBuffer msg1; 
+    memset((void *)msg1.msgText, '\0',sizeof(msg1.msgText)); 
+    
+  
+    
+    msgrcv(mid, (void*) &msg1, chunkSize, mapperID, 0);
+    printf("message recieved\n");
+   // printf("message = %s\n", msg1.msgText);
+    
+//    if(valid == -1){
+//      printf("Unable to recieve msg from master in getChunkData\n ");
+//      exit(0);
+//    }
+
+
 
     /*copy recieved chunk into previously allocated buffer*/
-    strcpy(retChunk, msg.msgText);
-      
+    strcpy(retChunk, msg1.msgText);
+    printf("getting ChunkData4\n");
+
     /*check for END*/ 
-    if(strcmp(msg.msgText, "END") == 0){ //END message received,
-      free(retChunk);
-      return NULL; 
+    if(strcmp(msg1.msgText, "END") == 0){
+    	  return NULL; 
     }else{
+      printf("getting ChunkData3\n");
       return retChunk;
     }
-
 }
 
 // sends chunks of size 1024 to the mappers in RR fashion
 void sendChunkData(char *inputFile, int nMappers) {
-  printf("now in sendChunkData... \n");
+  printf("start sendChunkData\n");
   
   /*open Message Queue*/
   key_t key = ftok("project", 4285922);        //has to be the same key as the one in getChunkdata()
@@ -72,13 +81,14 @@ void sendChunkData(char *inputFile, int nMappers) {
  
   while(fscanf(f,"%s",currentword) !=EOF ){ 
       wordlength = strlen(currentword);                              //store size of the word that was just read from file 
-      printf("total bytes  = %d\n", totalbytes);
       if (totalbytes+wordlength+1 <= 1024){                            //the chunk isn't 1024 bytes yet, and wouldn't be if the next word was added
        totalbytes += (wordlength + 1);                                 //+1 for whitespace
       }else{                                                           //the chunk would overflow, splitting a word, so send what is currenty in the chunk
       chunk.msgType = mapperid;
-      
+      printf("chunk.msgType = %ld\n",  chunk.msgType);
+      printf("size of message = %ld bytes\n",  sizeof(chunk.msgText));
       /*Send chunk to queue*/
+      //printf("sending in sendChunkData: %s\n", chunk.msgText);
       int check = msgsnd(msgid, &chunk, sizeof(chunk.msgText), 0);    //WHY DOES THIS LINE HANG???!!!!!!!
       printf("this is the line past send msg...\n");
       if (check == -1){
@@ -103,10 +113,11 @@ void sendChunkData(char *inputFile, int nMappers) {
   
   /*send the last chunk (if there is anything in it) once the file has been fully read*/
   if(totalbytes > 0){
-    printf("total bytes = %d\n", totalbytes);
+    printf("sending last chunk");
     chunk.msgType = mapperid; 
        
      /*Send chunk to queue*/
+     printf("sending in sendChunkData: %s\n", chunk.msgText);
     int check1 = msgsnd(msgid, &chunk,sizeof(chunk.msgText),0);
     if (check1 == -1){
         perror("Message send failed\n");
@@ -151,104 +162,71 @@ int hashFunction(char* key, int reducers){
 
 void shuffle(int nMappers, int nReducers) {
   
+  printf("Now in shuffle\n");
+  
+  /*Message queue*/
   key_t key = ftok("project", 4285922);  
   int msgid = msgget(key, PERM | IPC_CREAT );
   if (msgid == -1){
-   perror("Failed to create message queue in shuffle\n");
-   exit(0);
+    perror("Failed to create message queue in shuffle\n");
+    exit(0);
   }
+  struct dirent* entry;
   
-	struct msgBuffer msg;
-	char *wordFilePath;
-	char *wordFileName;
-	int reducerID = 0;
+  for(int i=1; i<nMappers+1; i++) {
+    /*Variables needed*/
+    int reducerID;
+    char path[50] = "output/MapOut/Map_"; // path of file will never be more than 50
+    char strnum[5];
+    
+    /*add number to directory name*/
+    sprintf(strnum,"%d",i);
+    strcat(path,strnum); 
+      
+    /*Directory Traversal*/  
+    DIR* dir = opendir(path);
+    struct dirent* entry;
+    while ((entry = readdir(dir)) != NULL) {
+     
+     /*if it is a file...*/
+      if (!strcmp(entry->d_name, ".") || !strcmp(entry->d_name, ".."))    continue;
+      
+      /*generate file path*/
+      struct msgBuffer chunk1;
+      memset(chunk1.msgText, '\0', 1024);
+      char filepath[50] =""; 
+      strcpy(filepath, path); 
+      strcat(filepath, "/");
+      strcat(filepath, entry->d_name); 
+      strcat(chunk1.msgText, filepath); 
+      
+      /*use the given hash function to send file to reducer*/
+      reducerID = hashFunction(entry->d_name, nReducers);
+      chunk1.msgType = reducerID+1;
+      int test = msgsnd(msgid, (void *)&chunk1,sizeof(chunk1.msgText),0);
+      if (test == -1){
+        perror("Failed sending message to reducer in Shuffle()\n");
+        exit(0);
+      } 
+    }
+   }
+  
 
-	//traverse the directory of each Mapper and send the word filepath to the reducers
-	for(int i = 1; i <= nMappers; i += 1)
-	{
-      		//have mapid increment to be correct directory name to open
-      		char mapid_str[100];
-      		int map_id = i;
-      		sprintf(mapid_str, "output/MapOut/Map_%i", map_id);
-
-		printf("path: %s\n", mapid_str);
-		fflush(stdout);
-
-		DIR *dir = opendir(mapid_str);
-
-		struct dirent *dir_entry;
-
-     		char curr_dir[1024] = {'\0'};
-      		getcwd(curr_dir, sizeof(curr_dir));
-
-		//select reducer id and send word filepath to reducer
-		while((dir_entry = readdir(dir)) != NULL)
-		{
-
-			if ((strcmp(dir_entry->d_name, ".") == 0) || (strcmp(dir_entry->d_name, "..") == 0))
-			{
-				continue;
-			}
-
-			wordFileName = dir_entry->d_name;
-
-			printf("wordFileName: %s\n", wordFileName);
-			fflush(stdout);
-
-			//select reducer
-                        reducerID = hashFunction(wordFileName, nReducers) + 1;
-
-			//check if regular file and concatenate to get wordFilePath
-        		if((dir_entry->d_type == DT_REG))
-			{
-          			struct stat entry_stat;
-          			char this_entry[1024] = {'\0'};
-
-				strcat(this_entry, curr_dir);
-          			strcat(this_entry, "/");
-          			strcat(this_entry, mapid_str);
-				strcat(this_entry, "/");
-				strcat(this_entry, dir_entry->d_name);
-
-				//prepare to send word filepath to reducers
-				wordFilePath = this_entry;
-				msg.msgType = reducerID;
-				memset(msg.msgText, '\0', MSGSIZE);
-				strcpy(msg.msgText, wordFilePath);
-			}
-
-			//send word filepath to reducers
-			if( (msgsnd(msgid, &msg, sizeof(msg.msgText), 0)) < 0)
-			{
-				printf("message filepath send error\n");
-				exit(0);
-			}
-
-		}
-
-
-		printf("outside of shuffle while loop\n");
-		fflush(stdout);
-
-		closedir(dir);
-		continue;
-	}
-
-	//send END message to reducers
-	for (int j = 1; j <= nReducers; j += 1) { 
-		msg.msgType = (j % nReducers) + 1;
-		memset(msg.msgText, '\0', MSGSIZE);
-		strcpy(msg.msgText, "END");
-
-		if (msgsnd(msgid, &msg, sizeof(msg.msgText), 0) < 0) {
-			printf("message send error\n");
-			exit(0);
-		}
-
-	}
+  /*Create and send END message to every mapper*/ 
+  struct msgBuffer chunk2;
+  memset(chunk2.msgText, '\0', 1024);
+  strcat(chunk2.msgText, "END"); 
+  
+  for(int i = 1; i < nReducers + 1; i++){
+    
+      chunk2.msgType = i;
+      msgsnd(msgid, (void *)&chunk2,sizeof(chunk2.msgText),0);
+  }
+   
 }
 
 int getInterData(char *key, int reducerID) {  //key is the file path to txt file
+  printf("Now in getInterData\n");
 
   /*open Message Queue*/
   key_t MsgKey = ftok("project",4285922);          //the key can be whatever, but it has to be the same as the one used to open the msg queue in  sendChunkData(). TA recommends the 2nd argument be student id#
@@ -259,21 +237,23 @@ int getInterData(char *key, int reducerID) {  //key is the file path to txt file
   }
 
   /*Make and Blank chunk*/
-  struct  msgBuffer chunk;
-  memset((void *)chunk.msgText, '\0',1024); 
+  struct  msgBuffer chunk3;
+  memset((void *)chunk3.msgText, '\0',1024); 
   
   /*Recieve from queue*/
-  int rcv = msgrcv(mid,(void *)&chunk, sizeof(chunk.msgText), reducerID, 0);
+  int rcv = msgrcv(mid,(void *)&chunk3, sizeof(chunk3.msgText), reducerID, 0);
   if (rcv == -1){
     perror("Failed to get recieve from Queue\n");
     exit(0);
 
   }
   
-   char*c = malloc(sizeof(chunk.msgText));
-   strcpy(c, chunk.msgText); 
-   strcpy(key, c);// copy recieved chunk to key
-  
+  /*Make Buffer and copy to it*/
+   char*c = malloc(sizeof(chunk3.msgText));
+   strcpy(c, chunk3.msgText); 
+   strcpy(key, c);
+   
+   
     if (strcmp(key,"END") == 0){
         return 0;
     }
