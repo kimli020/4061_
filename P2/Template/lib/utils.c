@@ -3,14 +3,13 @@
 #define PATHSIZE 50
 #define ENDMSG "END\0"
 #define ACKMSG "ACK\0"
-// struct used for receiving chunks
-struct msgBuffer2 {
+/*Define other message structs needed*/
+struct msgBuffer2 {                  //for sending and recieving chunks of data
     long msgType;
     char msgText[chunkSize+1];
 };
-
-// struct used for receiving file paths 
-struct msgBuffer3{
+ 
+struct msgBuffer3{                  //for sending and recieving filepaths
   long msgType;
   char msgText[PATHSIZE+1];
 };
@@ -20,7 +19,7 @@ struct msgBuffer3{
 //  User-defined function prototypes
 char *getChunkData(int mapperID) {
     
-    printf("ChunkData. mapperID = %d\n", mapperID);
+    printf("ChunkData checkpoint 1. mapperID = %d\n", mapperID);
     
     /*open Message Queue*/
     key_t key = ftok("project", 4285922);          //the key can be whatever, but it has to be the same as the one used to open the msg queue in  sendChunkData(). TA recommends the 2nd argument be student id#
@@ -30,7 +29,6 @@ char *getChunkData(int mapperID) {
         exit(-1);
     }
     
-
     /*Recieve a chunk from the master*/
     struct msgBuffer2 msg1; 
     memset((void *)msg1.msgText, '\0',sizeof(msg1.msgText)); 
@@ -40,7 +38,7 @@ char *getChunkData(int mapperID) {
       exit(0);
     }
   
-    /*Create Buffer for ChunkData*/
+    /*Create Buffer for chunk recieved from master*/
     char *retChunk;
     retChunk = (char *)malloc(sizeof(char)*(chunkSize+1));
     memset(retChunk, '\0', chunkSize+1); 
@@ -48,21 +46,27 @@ char *getChunkData(int mapperID) {
  
      /*copy recieved chunk into previously allocated buffer*/
     strcpy(retChunk, msg1.msgText);
-    printf("getting ChunkData4\n");
+    printf("ChunkData checkpoint 2. mapperID = %d\n", mapperID);
 
-    /*check for END*/ 
+    /*check for END / Send ACK*/ 
     if(strcmp(msg1.msgText, ENDMSG) == 0){
-        printf("getting ChunkData4\n");
-    	  return NULL; 
+        printf("End msg recieved in getChunkData() for mapperID %d\n", mapperID);
+    	  return retChunk; 
     }else{
-      printf("getting ChunkData3\n");
-      return retChunk;
+      struct msgBuffer2 ackm;
+      ackm.msgType = ACKTYPE;
+      strcpy(ackm.msgText, ACKMSG);
+      int send = msgsnd(mid, &ackm, sizeof(struct msgBuffer2), 0);
+      if ( send == -1) { // send an ack message 
+        printf("failed to send ACK mesg in getChunkData() for mapperID %d\n", mapperID);
+        exit(0);
+      }
     }
 }
 
 // sends chunks of size 1024 to the mappers in RR fashion
 void sendChunkData(char *inputFile, int nMappers) {
-  printf("start sendChunkData\n");
+   printf("sendChunkData checkpoint 1. mapperID = %d\n", mapperID);
   
   /*open Message Queue*/
   key_t key = ftok("project", 4285922);        //has to be the same key as the one in getChunkdata()
@@ -100,9 +104,8 @@ void sendChunkData(char *inputFile, int nMappers) {
       printf("size of message = %ld bytes\n",  strlen(chunk.msgText));
       
       /*Send chunk to queue*/
-      //printf("sending in sendChunkData: %s\n", chunk.msgText);
+      printf("sending in sendChunkData: %s\n", chunk.msgText);
       int check = msgsnd(msgid, &chunk, sizeof(chunk.msgText), 0);    //WHY DOES THIS LINE HANG???!!!!!!!
-      printf("this is the line past send msg...\n");
       if (msgsnd(msgid, &chunk, sizeof(chunk.msgText), 0) == -1){
         printf("Error sending file in SendChunkData for mapperID# %d\n", mapperid);
         exit(0);
@@ -182,8 +185,7 @@ int hashFunction(char* key, int reducers){
 void shuffle(int nMappers, int nReducers) {
   
   printf("Now in shuffle\n");
-  
-  
+   
   /*Message queue*/
   key_t key = ftok("project", 4285922);  
   int msgid = msgget(key, PERM | IPC_CREAT );
@@ -204,9 +206,9 @@ void shuffle(int nMappers, int nReducers) {
     sprintf(strnum,"%d",i);
     strcat(path,strnum); 
       
-    DIR* dir = opendir(path);
+    DIR* dire = opendir(path);
     struct dirent* entry;
-    while ((entry = readdir(dir)) != NULL) {
+    while ((entry = readdir(dire)) != NULL) {
      
      /*Do nothing for these kinds of files*/
     if (!strcmp(entry->d_name, ".") || !strcmp(entry->d_name, "..")){  
@@ -225,33 +227,30 @@ void shuffle(int nMappers, int nReducers) {
       /*use the given hash function to send file to reducer*/
       reducerID = hashFunction(entry->d_name, nReducers);
       chunk1.msgType = reducerID + 1;
-      int test = msgsnd(msgid, (void *)&chunk1,sizeof(msgBuffer3),0);
+      int test = msgsnd(msgid, (void *)&chunk1,sizeof(chunk1.msgText),0);
       if (test == -1){
         perror("Failed sending message to reducer in Shuffle()\n");
         exit(0);
       } 
     }
-  }
-  
   /*Close Directory*/
-  if (closedir(dir) == -1) {
-    printf("Directory  close failure in traverseDirectory() for mapper %d\n", mapperID);
-    exit(0);
+  closedir(dire);
   }
   
 
+  
   /*Create and send END message to reducers*/ 
-  struct msgBuffer2 end;
-  memset(end.msgText, '\0', 1024);
-  strcat(end.msgText, "MSG"); 
+  struct msgBuffer2 endm;
+  memset(endm.msgText, '\0', sizeof(endm.msgText));
+  strcat(endm.msgText, "MSG"); 
   for(int i = 1; i < nReducers + 1; i++){
-      end.msgType = i;
-      msgsnd(msgid, (void *)&end,sizeof(msgBuffer3),0);
+      endm.msgType = i;
+      msgsnd(msgid, (void *)&endm,sizeof(endm.msgText),0);
   }
   
   /* Recieve ACK from reducers */
   for(int i = 0; i < nReducers; i++){
-    if (msgrcv(qid, &endmsg, sizeof(struct msgbuffer3), ACKTYPE, 0) == -1) {
+    if (msgrcv(msgid, &endm, sizeof(endm.msgText), ACKTYPE, 0) == -1) {
       printf("failed to receive ack message in shuffle()\n");
       exit(0);
     }
