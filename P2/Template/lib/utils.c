@@ -1,10 +1,25 @@
 #include "utils.h"
 #define PERM  0666
+#define PATHSIZE 50
 #define ENDMSG "END\0"
 #define ACKMSG "ACK\0"
+// struct used for receiving chunks
+struct msgBuffer2 {
+    long msgType;
+    char msgText[chunkSize+1];
+};
+
+// struct used for receiving file paths 
+struct msgBuffer3{
+  long msgType;
+  char msgText[PATHSIZE+1];
+};
+
+
 
 //  User-defined function prototypes
 char *getChunkData(int mapperID) {
+    
     printf("ChunkData. mapperID = %d\n", mapperID);
     
     /*open Message Queue*/
@@ -17,25 +32,21 @@ char *getChunkData(int mapperID) {
     
 
     /*Recieve a chunk from the master*/
-    struct msgBuffer msg1; 
+    struct msgBuffer2 msg1; 
     memset((void *)msg1.msgText, '\0',sizeof(msg1.msgText)); 
-    msgrcv(mid, &msg1, sizeof(msg1.msgText), mapperID, 0);
-//    if(valid == -1){
-//      printf("Unable to recieve msg from master in getChunkData\n ");
-//      exit(0);
-//    }
+    int valid =  msgrcv(mid, &msg1, sizeof(msg1.msgText), mapperID, 0);
+    if(valid == -1){
+      printf("Unable to recieve msg from master in getChunkData\n ");
+      exit(0);
+    }
   
     /*Create Buffer for ChunkData*/
     char *retChunk;
     retChunk = (char *)malloc(sizeof(char)*(chunkSize+1));
     memset(retChunk, '\0', chunkSize+1); 
-   
-   // printf("message = %s\n", msg1.msgText);
-    
-
-
-
-    /*copy recieved chunk into previously allocated buffer*/
+ 
+ 
+     /*copy recieved chunk into previously allocated buffer*/
     strcpy(retChunk, msg1.msgText);
     printf("getting ChunkData4\n");
 
@@ -69,7 +80,7 @@ void sendChunkData(char *inputFile, int nMappers) {
   }
   
   /*Make and Blank chunk*/
-  struct msgBuffer chunk; 
+  struct msgBuffer2 chunk; 
   memset((void *)chunk.msgText, '\0',1024); 
   
   
@@ -181,30 +192,29 @@ void shuffle(int nMappers, int nReducers) {
     exit(0);
   }
   
-
   
+   /*Directory Traversal*/
   struct dirent* entry;
-  
   for(int i=1; i<nMappers+1; i++) {
+    
     /*Variables needed*/
     int reducerID;
     char path[50] = "output/MapOut/Map_"; // path of file will never be more than 50
     char strnum[5];
-    
-    /*add number to directory name*/
     sprintf(strnum,"%d",i);
     strcat(path,strnum); 
       
-    /*Directory Traversal*/  
     DIR* dir = opendir(path);
     struct dirent* entry;
     while ((entry = readdir(dir)) != NULL) {
      
-     /*if it is a file...*/
-      if (!strcmp(entry->d_name, ".") || !strcmp(entry->d_name, ".."))    continue;
+     /*Do nothing for these kinds of files*/
+    if (!strcmp(entry->d_name, ".") || !strcmp(entry->d_name, "..")){  
+        continue;
+    }
       
-      /*generate file path*/
-      struct msgBuffer chunk1;
+       /*generate file path*/
+      struct msgBuffer3 chunk1;
       memset(chunk1.msgText, '\0', 1024);
       char filepath[50] =""; 
       strcpy(filepath, path); 
@@ -214,25 +224,37 @@ void shuffle(int nMappers, int nReducers) {
       
       /*use the given hash function to send file to reducer*/
       reducerID = hashFunction(entry->d_name, nReducers);
-      chunk1.msgType = reducerID+1;
-      int test = msgsnd(msgid, (void *)&chunk1,sizeof(chunk1.msgText),0);
+      chunk1.msgType = reducerID + 1;
+      int test = msgsnd(msgid, (void *)&chunk1,sizeof(msgBuffer3),0);
       if (test == -1){
         perror("Failed sending message to reducer in Shuffle()\n");
         exit(0);
       } 
     }
-   }
+  }
+  
+  /*Close Directory*/
+  if (closedir(dir) == -1) {
+    printf("Directory  close failure in traverseDirectory() for mapper %d\n", mapperID);
+    exit(0);
+  }
   
 
-  /*Create and send END message to every mapper*/ 
-  struct msgBuffer chunk2;
-  memset(chunk2.msgText, '\0', 1024);
-  strcat(chunk2.msgText, "END"); 
-  
+  /*Create and send END message to reducers*/ 
+  struct msgBuffer2 end;
+  memset(end.msgText, '\0', 1024);
+  strcat(end.msgText, "MSG"); 
   for(int i = 1; i < nReducers + 1; i++){
-    
-      chunk2.msgType = i;
-      msgsnd(msgid, (void *)&chunk2,sizeof(chunk2.msgText),0);
+      end.msgType = i;
+      msgsnd(msgid, (void *)&end,sizeof(msgBuffer3),0);
+  }
+  
+  /* Recieve ACK from reducers */
+  for(int i = 0; i < nReducers; i++){
+    if (msgrcv(qid, &endmsg, sizeof(struct msgbuffer3), ACKTYPE, 0) == -1) {
+      printf("failed to receive ack message in shuffle()\n");
+      exit(0);
+    }
   }
    
 }
@@ -249,7 +271,7 @@ int getInterData(char *key, int reducerID) {  //key is the file path to txt file
   }
 
   /*Make and Blank message and recieve from master*/
-  struct  msgBuffer chunk;
+  struct  msgBuffer3 chunk;
   memset((void *)chunk.msgText, '\0',1024); 
   chunk.msgType = reducerID;
   int rcv = msgrcv(mid,(void *)&chunk, sizeof(chunk.msgText), reducerID, 0);
@@ -258,10 +280,10 @@ int getInterData(char *key, int reducerID) {  //key is the file path to txt file
     exit(0);
 
   }
-  // check for END message and send ACK to master
+  /*Recieve END message and send ACK to master*/
   if(!strcmp(chunk.msgText, ENDMSG)){
     chunk.msgType = ACKTYPE;
-    memset(chunk.msgText, '\0', 51);      //max path name is 50
+    memset(chunk.msgText, '\0', PATHSIZE+1);      //max path name is 50
     strcpy(chunk.msgText, ACKMSG);
     if (msgsnd(mid, &chunk, sizeof(struct msgBuffer), 0) == -1) {
       printf("failed to send ack message in getInterData() from reducerID %d\n", reducerID);
@@ -269,8 +291,8 @@ int getInterData(char *key, int reducerID) {  //key is the file path to txt file
     }
     return 0;
   }else{
-    strcpy(key, chunk.msgText); // copy file path to the key
-    return 1; //  more paths to receive
+    strcpy(key, chunk.msgText); 
+    return 1;
   }
 }
 
